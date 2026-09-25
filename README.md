@@ -54,7 +54,7 @@ evenodd / nonzero 填充规则汇总为 inside / outside，开放子路径不参
 │   ├── holeclearance.py # 孔洞最大内接圆：距离上界优先网格细分、直属岛避让、预算超限报错
 │   ├── windowcov.py   # 矩形窗口覆盖分析：Sutherland–Hodgman 裁剪、层级交替累加、逐窗覆盖率
 │   └── diff.py        # 版本差异审计：指纹+索引稳定匹配、三类 modified 分类
-├── tests/             # pytest 单元 + API 端到端测试（383 个）
+├── tests/             # pytest 单元 + API 端到端测试（388 个）
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
@@ -1100,7 +1100,7 @@ SVG 规范的端点参数化算法；在标志位或坐标处被截断的非法�
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -q          # 383 passed
+pytest -q          # 388 passed
 ```
 
 覆盖：解析器边界（非法命令流、`Z` 后零参数命令不得隐式重复的死循环回归、

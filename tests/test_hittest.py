@@ -63,6 +63,71 @@ def test_boundary_on_diagonal_edge():
         (3, 3): "boundary", (7, 7): "boundary", (3, 4): "outside"}
 
 
+def test_extreme_aspect_ratio_ring_has_no_visible_boundary_band():
+    # 长宽 1e9:1 的闭合矩形：整环跨度不得沿长边扩出可见边界带
+    d = "M0 0 H1000000000 V10 H0 Z"
+    pts = [(5, 0.5),                  # 长边内侧 0.5 单位 -> inside
+           (1000000000.5, 5),         # 右边外侧 0.5 单位 -> outside
+           (5, 0),                    # 真正落在长边上 -> boundary
+           (5, 10), (0, 5),
+           (1000000000, 5),
+           (0, 0), (1000000000, 10)]  # 端点
+    assert _results(d, pts, "nonzero") == [
+        "inside", "outside", "boundary",
+        "boundary", "boundary", "boundary", "boundary", "boundary"]
+    assert _results(d, pts, "evenodd") == [
+        "inside", "outside", "boundary",
+        "boundary", "boundary", "boundary", "boundary", "boundary"]
+    # 远在长边外端的点也只按局部误差判定，不被整环跨度拉入 boundary
+    m = _map(d, [(500000000, 0.5), (500000000, 5), (500000000, -0.5)])
+    assert m == {(500000000, 0.5): "inside",
+                 (500000000, 5): "inside",
+                 (500000000, -0.5): "outside"}
+    # 半像素级（0.5 单位）的边外近点在短边两端同样不得误判 boundary
+    assert _results(d, [(-0.5, 5), (5, 10.5)]) == ["outside", "outside"]
+
+
+def test_diagonal_edge_uses_same_local_tolerance():
+    # 远处的斜边：同口径（局部数值误差）判定，端点与微小偏移分清
+    d = "M1000000000,1000000000 L1000000010,1000000000 L1000000010,1000000010 Z"
+    # 闭合斜边 (1e9+10,1e9+10)->(1e9,1e9) 的中点与端点
+    pts = [(1000000005.0, 1000000005.0),
+           (1000000000.0, 1000000000.0),
+           (1000000010.0, 1000000010.0)]
+    assert _results(d, pts) == ["boundary", "boundary", "boundary"]
+    # 斜边法向 0.5 单位偏移：(dx=-0.25,dy=+0.25) 落在三角形外侧，
+    # (dx=+0.25,dy=-0.25) 落在内侧，两者都不得因斜边容差判 boundary
+    assert _results(d, [(1000000004.75, 1000000005.25),
+                        (1000000005.25, 1000000004.75)]) == [
+        "outside", "inside"]
+
+
+def test_zero_length_edge_at_far_coordinates_matches_only_point():
+    # 远处退化为单点的闭合路径：零长边只匹配该端点，不扩出可见带
+    d = "M1000000000,5 Z"
+    m = _map(d, [(1000000000.0, 5.0),
+                 (1000000000.5, 5.0),
+                 (1000000000.0, 5.5)])
+    assert m == {(1000000000.0, 5.0): "boundary",
+                 (1000000000.5, 5.0): "outside",
+                 (1000000000.0, 5.5): "outside"}
+
+
+def test_far_translated_collinear_points_still_boundary():
+    # 平移到 1e12 处的细矩形：绝对坐标叉积会大数相消，
+    # 边上细分/插值点（与曲线细分顶点同口径）仍必须判 boundary
+    ox = 1_000_000_000_000.0
+    oy = 1_000_000_000_000.0
+    d = (f"M{ox},{oy} H{ox+1000} V{oy+10} H{ox} Z")
+    mid_x = ox + (1000.0 / 12.0)   # 非简单比例的插值点
+    pts = [(mid_x, oy),                 # 长边上的插值点 -> boundary
+           (ox + 500, oy + 0.5),        # 长边内侧 -> inside
+           (ox + 1000.5, oy + 5),       # 右边外侧 -> outside
+           (ox, oy), (ox + 1000, oy + 10)]
+    assert _results(d, pts) == [
+        "boundary", "inside", "outside", "boundary", "boundary"]
+
+
 # ---------------------------------------------------------------------------
 # 填充规则：外-孔、同向/反向重叠
 # ---------------------------------------------------------------------------

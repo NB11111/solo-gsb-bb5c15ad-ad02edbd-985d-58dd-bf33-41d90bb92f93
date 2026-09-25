@@ -1227,6 +1227,19 @@ def test_hit_test_curve_flattened(client):
         "inside", "boundary", "outside"]
 
 
+def test_hit_test_extreme_aspect_ratio_ring_boundary_band(client):
+    # 1e9:1 细矩形：整环跨度不得沿长边扩出可见边界带
+    pid = _mk(client, "M0 0 H1000000000 V10 H0 Z")
+    body = client.post(f"/paths/{pid}/hit-test", json={"points": [
+        {"x": 5, "y": 0.5},
+        {"x": 1000000000.5, "y": 5},
+        {"x": 5, "y": 0},
+        {"x": 1000000000, "y": 5}]}).json()
+    assert [i["result"] for i in body["results"]] == [
+        "inside", "outside", "boundary", "boundary"]
+    assert [i["index"] for i in body["results"]] == [0, 1, 2, 3]
+
+
 def test_hit_test_empty_path_all_outside(client):
     pid = _mk(client, "")
     body = client.post(f"/paths/{pid}/hit-test",
