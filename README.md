@@ -54,7 +54,7 @@ evenodd / nonzero 填充规则汇总为 inside / outside，开放子路径不参
 │   ├── holeclearance.py # 孔洞最大内接圆：距离上界优先网格细分、直属岛避让、预算超限报错
 │   ├── windowcov.py   # 矩形窗口覆盖分析：Sutherland–Hodgman 裁剪、层级交替累加、逐窗覆盖率
 │   └── diff.py        # 版本差异审计：指纹+索引稳定匹配、三类 modified 分类
-├── tests/             # pytest 单元 + API 端到端测试（383 个）
+├── tests/             # pytest 单元 + API 端到端测试（388 个）
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
@@ -745,7 +745,10 @@ curl -s -X POST localhost:8000/paths/1/intersections
 
 - **boundary 优先**：点落在任一**闭合子路径**细分折线的**任一条边**
   （含末点回首点的闭合边与边的端点）上即判 `boundary`，不再参与填充汇总；
-  边界容差按环尺寸自适应（与规范化包含判定同口径）；
+  边界容差**逐条候选边按该边附近的浮点前向误差**取（叉积、点积各自的
+  舍入上界加坐标 ulp），**不按整环包围盒放大**——长宽悬殊的轮廓
+  （如宽 10⁹、高 10 的长条）不会沿长边长出可见的“边界带”；
+  斜边、端点与零长边按同一口径（叉积垂直判据 + 点积区间判据）判定；
 - 其余点按**保存的 `fill_rule`** 对全部闭合子路径汇总：
   - `evenodd`：右向水平射线**交叉次数为奇数** → `inside`，偶数 → `outside`；
   - `nonzero`：**有向边绕数非零** → `inside`，为零 → `outside`
@@ -1100,7 +1103,7 @@ SVG 规范的端点参数化算法；在标志位或坐标处被截断的非法�
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -q          # 383 passed
+pytest -q          # 388 passed
 ```
 
 覆盖：解析器边界（非法命令流、`Z` 后零参数命令不得隐式重复的死循环回归、
@@ -1157,7 +1160,11 @@ endpoint_contact/collinear_overlap 的类型与涉及边索引一致，大坐标
 参与（叶内 inside、叶间 outside、自交点 boundary）、闭合退化线段/点只
 贡献 boundary、开放子路径（含两点退化开放线）不参与且落在其上也不是
 boundary、空路径全 outside、曲线细分顶点命中、凹多边形半开边顶点规则、
-按输入顺序回显索引与坐标、两种填充规则差异、最多 500 点边界（恰好 500
+按输入顺序回显索引与坐标、两种填充规则差异、**长宽悬殊轮廓（1e9×10
+横/竖长条）不扩出可见边界带**（环内 0.5 仍 inside、环外 0.5 仍 outside、
+真正在边上的点 boundary）、长斜边浮点插值点命中、斜边偏离不被沿边长度
+吞掉、短边端点不被邻接长边拉长、零长度/退化边同口径、
+最多 500 点边界（恰好 500
 放行、501 拒绝）、空列表/缺字段/非数字/NaN/Infinity/1e999 返回 422、
 确定性与只读不落库、404/非法 id/脏数据 422 等；
 孔洞最大内接圆的方孔精确圆心半径、长条孔短边一半半径、L 形凹孔不退化为

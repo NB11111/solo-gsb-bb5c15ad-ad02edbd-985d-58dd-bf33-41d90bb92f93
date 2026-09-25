@@ -64,6 +64,82 @@ def test_boundary_on_diagonal_edge():
 
 
 # ---------------------------------------------------------------------------
+# 长宽悬殊轮廓：边界容差按候选边附近的数值误差，不扩出可见边界带
+# ---------------------------------------------------------------------------
+
+def test_extreme_aspect_ratio_rectangle_no_boundary_band():
+    # 闭合矩形 M0 0 H1e9 V10 H0 Z：宽 1e9、高 10，长宽比 1e8
+    d = "M0 0 H1000000000 V10 H0 Z"
+    pts = [(5, 0.5), (1000000000.5, 5), (5, 0)]
+    for fill_rule in ("nonzero", "evenodd"):
+        assert _results(d, pts, fill_rule) == [
+            "inside", "outside", "boundary"]
+
+    # 四条边、四个顶点（含闭合边）上的点仍为 boundary
+    on_edges = [(0, 0), (5, 0), (500000000, 0), (1000000000, 0),
+                (1000000000, 5), (1000000000, 10), (500000000, 10),
+                (0, 10), (0, 5)]
+    assert all(r == "boundary"
+               for r in _results(d, on_edges, "evenodd"))
+
+    # 明显在内/外侧的点按填充汇总，不被容差吞掉
+    assert _results(
+        d, [(5, 5), (999999999, 1), (-0.001, 5), (5, -0.001),
+            (5, 10.001), (1000000000.001, 5)], "nonzero") == [
+        "inside", "inside", "outside", "outside", "outside", "outside"]
+
+
+def test_extreme_aspect_ratio_vertical_rectangle():
+    # 横向版本旋转 90°：宽 10、高 1e9，长边为竖边（x=0 / x=10）
+    d = "M0,0 H10 V1000000000 H0 Z"
+    pts = [(0.5, 5), (5, 1000000000.5), (0, 5), (5, 500000000),
+           (10, 500000000)]
+    assert _results(d, pts, "nonzero") == [
+        "inside", "outside", "boundary", "inside", "boundary"]
+
+
+def test_diagonal_long_edge_uses_same_local_error_tolerance():
+    # 极长缓斜边：真正在斜边上的点（含浮点插值点）判 boundary，
+    # 垂直偏离斜边的点不被沿边长度放大的容差吞掉
+    d = "M0,0 L1000000000,100000000 Z"  # 闭合退化长斜线，只贡献 boundary
+    a = (0.0, 0.0)
+    b = (1000000000.0, 100000000.0)
+    on = [(a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]))
+          for t in (0.1, 0.37, 0.5, 0.73, 0.9)]
+    # 斜边斜率 0.1：点 (x, 0.1*x + 5000) 垂直偏离斜边约 5000
+    off = [(x, 0.1 * x + 5000.0) for x in (1e7, 5e8, 9e8)]
+    assert _results(d, on) == ["boundary"] * len(on)
+    assert _results(d, off) == ["outside"] * len(off)
+
+
+def test_endpoint_ball_is_coordinate_ulp_not_visible_band():
+    # 顶点附近：远小于几何尺寸但大于坐标 ulp 的偏移仍是 outside；
+    # 1 ulp 量级（1e9 处 ~1e-7）内视为数值不可分辨的 boundary。
+    # 注意 (0.001, 0) 确实落在底边 y=0 上，应是 boundary。
+    d = "M0 0 H1000000000 V10 H0 Z"
+    assert _results(
+        d, [(1000000000.001, 5), (-0.001, 0), (0.001, -0.001),
+            (0.001, 10.001)]) == [
+        "outside", "outside", "outside", "outside"]
+    assert _results(d, [(0.001, 0.001)]) == ["inside"]
+    assert _results(d, [(0.001, 0), (1000000000 + 1e-7, 5), (1e-7, 0)]) == [
+        "boundary", "boundary", "boundary"]
+
+
+def test_zero_length_and_degenerate_edges_same_rule_at_scale():
+    # 单点闭合轮廓：点本身 boundary，稍远 outside（含 1e9 量级坐标）
+    d = "M1000000000,1000000000 Z"
+    assert _results(
+        d, [(1000000000, 1000000000), (1000000000, 1000000001)]) == [
+        "boundary", "outside"]
+    # 闭合退化长线段：边上各点（含远端点）boundary，线外 outside
+    d = "M0,0 L1000000000,0 L0,0 Z"
+    assert _results(d, [(500000000, 0), (1000000000, 0),
+                        (500000000, 1), (0, 0)]) == [
+        "boundary", "boundary", "outside", "boundary"]
+
+
+# ---------------------------------------------------------------------------
 # 填充规则：外-孔、同向/反向重叠
 # ---------------------------------------------------------------------------
 

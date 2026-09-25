@@ -6,8 +6,9 @@
 
 - **boundary 优先**：点落在任一**闭合子路径**细分折线的**任一条边**
   （含末点回首点的闭合边、边的端点）上即判 ``boundary``，不再参与
-  填充汇总；边界容差按环尺寸自适应（与
-  :func:`app.svggeo.point_in_ring` 同一容差口径）；
+  填充汇总；边界容差**逐条边按该边附近的浮点前向误差**自适应
+  （叉积/点积的舍入上界加坐标 ulp），不按整环包围盒放大——长宽悬殊
+  的环不会沿长边长出可见的“边界带”，斜边、端点与零长边同口径；
 - 其余点按保存的 ``fill_rule`` 对**全部闭合子路径**汇总：
   - ``evenodd``：右向水平射线交叉次数为奇数 -> ``inside``，
     偶数 -> ``outside``；
@@ -34,8 +35,10 @@ from .svggeo import Contour
 
 # 单次请求允许的最多查询点数，超限由路由层（Pydantic）返回 422
 MAX_HIT_POINTS = 500
-# 边界判定的相对浮点容差（与 svggeo.point_in_ring 同口径）
-_EPS_REL = 1e-9
+# IEEE-754 双精度机器 epsilon（~2.22e-16）
+_EPS = 2.220446049250313e-16
+# 叉积/点积前向舍入误差的安全倍数（>3e 即可覆盖逐项乘积与加减的舍入）
+_EPS_K = 8.0
 
 
 def hit_test_points(contours: list[Contour],
@@ -61,7 +64,7 @@ def hit_test_points(contours: list[Contour],
 
     closed = [c for c in contours if c.closed]
     closed.sort(key=lambda c: c.original_index)
-    rings = [(c.points, _ring_eps(c.bounds)) for c in closed]
+    rings = [c.points for c in closed]
 
     results = [
         {"index": idx,
@@ -86,20 +89,20 @@ def hit_test_points(contours: list[Contour],
 
 
 def _classify(point: tuple[float, float],
-              rings: list[tuple[list[tuple[float, float]], float]],
+              rings: list[list[tuple[float, float]]],
               fill_rule: str) -> str:
     """逐边判定单点：先 boundary，再按填充规则汇总交叉/绕数。"""
     px, py = point
     crossings = 0
     winding = 0
 
-    for pts, eps in rings:
+    for pts in rings:
         n = len(pts)
         for k in range(n):
             ax, ay = pts[k]
             bx, by = pts[(k + 1) % n]
             # boundary 优先：点落在任一边（含闭合边/端点）上即返回
-            if _on_segment(ax, ay, bx, by, px, py, eps):
+            if _on_segment(ax, ay, bx, by, px, py):
                 return "boundary"
             # 半开边规则：水平边不计数，顶点只被一条邻边计数
             if (ay > py) != (by > py):
@@ -115,16 +118,40 @@ def _classify(point: tuple[float, float],
     return "inside" if winding != 0 else "outside"
 
 
-def _ring_eps(bounds: tuple[float, float, float, float]) -> float:
-    minx, miny, maxx, maxy = bounds
-    return _EPS_REL * max(1.0, maxx - minx, maxy - miny)
-
-
 def _on_segment(ax: float, ay: float, bx: float, by: float,
-                px: float, py: float, eps: float) -> bool:
-    """点 ``p`` 是否在线段 ``ab`` 上（含端点与零长度段），容差按边长缩放。"""
-    cross = (bx - ax) * (py - ay) - (by - ay) * (px - ax)
-    if abs(cross) > eps * max(1.0, math.hypot(bx - ax, by - ay)):
-        return False
-    return (min(ax, bx) - eps <= px <= max(ax, bx) + eps
-            and min(ay, by) - eps <= py <= max(ay, by) + eps)
+                px: float, py: float) -> bool:
+    """点 ``p`` 是否在线段 ``ab`` 上（含端点与零长度段）。
+
+    容差**只按该候选边附近的数值误差**取，不引用整环包围盒，因此
+    长宽悬殊轮廓的长边不会把判定带扩到可见宽度。判定分两步，各自的
+    舍入误差量级分别处理：
+
+    - **垂直方向（叉积）**：``cross = (b-a)×(p-a)`` 的前向舍入误差为
+      ``O(eps)`` 乘以参与运算的最大坐标量级，细分插值点在长边上的
+      垂直残差实测 ~``eps·coord``。容差
+      ``perp_tol = K·eps·max(|a|,|b|,|p|,|b-a|)``；
+    - **沿边方向（点积）**：``dot = (b-a)·(p-a)`` 用来确认投影落在
+      区间 ``[0, |b-a|²]`` 内，其舍入误差为 ``O(eps·|b-a|²)``，
+      故区间两端各放宽 ``K·eps·len²``——端点与整条边按同一条判定线
+      处理，端点外的点必须先在端点的坐标 ulp 内才会被接受；
+    - **零长度段**（``a == b``）退化为点到端点的距离判定，容差
+      ``K·eps·max(|a|,|p|)``。
+
+    对长 1e9、高 10 的环，沿长边的垂直判定带宽约 2e-6（相对环高不可见），
+    短边端点也不会被邻接长边的大坐标“拉长”出可见的端点球；
+    而真正在边上的细分点仍判 boundary。斜边与轴对齐边共用本式。
+    """
+    abx, aby = bx - ax, by - ay
+    apx, apy = px - ax, py - ay
+    len2 = abx * abx + aby * aby
+    cross = abx * apy - aby * apx
+    coord = max(math.hypot(ax, ay), math.hypot(bx, by),
+                math.hypot(px, py), math.hypot(abx, aby), 1.0)
+    if len2 == 0.0:
+        return math.hypot(apx, apy) <= _EPS_K * _EPS * coord
+    perp_tol = _EPS_K * _EPS * coord * math.sqrt(len2)
+    along_tol = _EPS_K * _EPS * len2
+    dot = abx * apx + aby * apy
+    return (abs(cross) <= perp_tol
+            and -along_tol <= dot <= len2 + along_tol)
+
